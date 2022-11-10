@@ -117,8 +117,23 @@ namespace Sandbox
                     Invalidate();
                     break;
 
+                case Keys.E:
+                    _driver.UseEllipsis = !_driver.UseEllipsis;
+                    Invalidate();
+                    break;
+
+                case Keys.O:
+                    _driver.UseNotOnlyEllipsis = !_driver.UseNotOnlyEllipsis;
+                    Invalidate();
+                    break;
+
                 case Keys.M:
                     _driver.ShowMeasuredSize = !_driver.ShowMeasuredSize;
+                    Invalidate();
+                    break;
+
+                case Keys.N:
+                    _driver.UseNoWrap = !_driver.UseNoWrap;
                     Invalidate();
                     break;
 

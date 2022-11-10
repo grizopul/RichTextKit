@@ -25,6 +25,10 @@ namespace SandboxDriver
             //MaxLines = 2
         };
 
+        public bool UseEllipsis { get; set; } = true;
+        public bool UseNoWrap { get; set; } = false;
+        public bool UseNotOnlyEllipsis { get; set; } = false;
+
         public void Render(SKCanvas canvas, float canvasWidth, float canvasHeight)
         {
             canvas.Clear(new SKColor(0xFFFFFFFF));
@@ -84,6 +88,9 @@ namespace SandboxDriver
 
             _textBlock.BaseDirection = BaseDirection;
             _textBlock.Alignment = TextAlignment;
+            _textBlock.EllipsisEnabled = UseEllipsis;
+            _textBlock.NoWrap = UseNoWrap;
+            _textBlock.NotOnlyEllipsis = UseNotOnlyEllipsis;
 
             switch (ContentMode)
             {

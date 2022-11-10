@@ -149,6 +149,44 @@ namespace Topten.RichTextKit
         }
 
         /// <summary>
+        /// Controls the rendering of an ellipsis (`...`) character when the result would be only a ellipsis character.
+        /// </summary>
+        /// <remarks>
+        /// The default value is false, an ellipsis can be rendered on its own.
+        /// </remarks>
+        public bool NotOnlyEllipsis
+        {
+            get => _notOnlyEllipsis;
+            set
+            {
+                if (value != _notOnlyEllipsis)
+                {
+                    _notOnlyEllipsis = value;
+                    InvalidateLayout();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Disables wrapping of lines. If combined with ellipsis, each line will be ellipsized if necessary.
+        /// </summary>
+        /// <remarks>
+        /// The default value is false.
+        /// </remarks>
+        public bool NoWrap
+        {
+            get => _nowrap;
+            set
+            {
+                if (value != _nowrap)
+                {
+                    _nowrap = value;
+                    InvalidateLayout();
+                }
+            }
+        }
+
+        /// <summary>
         /// Sets the left, right or center alignment of the text block.
         /// </summary>
         /// <remarks>
@@ -782,7 +820,7 @@ namespace Topten.RichTextKit
         public CaretInfo GetCaretInfo(CaretPosition position)
         {
             // Empty text block?
-            if (_codePoints.Length == 0 || position.CodePointIndex < 0 || _lines.Count == 0)
+            if (_codePoints.Length == 0 || position.CodePointIndex < 0 || _lines.Count == 0 || _nowrap)
             {
                 return CaretInfo.None;
             }
@@ -978,6 +1016,18 @@ namespace Topten.RichTextKit
         /// Option to control ellipsis
         /// </summary>
         bool _ellipsisEnabled = true;
+
+        
+        /// <summary>
+        /// Option to disallow ellipsis if that makes it the only cluster.
+        /// </summary>
+        bool _notOnlyEllipsis = false;
+
+
+        /// <summary>
+        /// Enable no wrap mode where each line is only broken on newlines. Makes ellipsis be per line. 
+        /// </summary>
+        private bool _nowrap = false;
 
         /// <summary>
         /// Text alignment
@@ -1388,7 +1438,7 @@ namespace Topten.RichTextKit
         {
             // Work out possible line break positions
             _lineBreaker.Reset(_codePoints.AsSlice());
-            var lineBreakPositions = _lineBreaker.GetBreaks(!_maxWidth.HasValue);
+            var lineBreakPositions = _lineBreaker.GetBreaks(_nowrap || !_maxWidth.HasValue);
 
             int frIndexStartOfLine = 0;     // Index of the first font run in the current line
             int frIndex = 0;                // Index of the current font run
@@ -1403,6 +1453,8 @@ namespace Topten.RichTextKit
 
             while (frIndex < _fontRuns.Count)
             {
+                var forcedBreak = false;
+
                 // Get the font run, update it's position
                 // and move to next
                 var fr = _fontRuns[frIndex];
@@ -1430,6 +1482,7 @@ namespace Topten.RichTextKit
                     if (totalWidthToThisBreakPoint > _maxWidthResolved)
                     {
                         breakLine = true;
+                        forcedBreak = _nowrap;
                         break;
                     }
 
@@ -1452,8 +1505,11 @@ namespace Topten.RichTextKit
                 }
 
                 // If we're on the last run and we've exceeded the width limit then force a break
-                if (!breakLine && frIndex + 1 == _fontRuns.Count && consumedWidth > _maxWidthResolved)
+                if (!breakLine && (frIndex + 1 == _fontRuns.Count || _nowrap) && consumedWidth > _maxWidthResolved)
+                {
                     breakLine = true;
+                    forcedBreak = _nowrap;
+                }
 
                 // Break the line here?
                 if (!breakLine)
@@ -1464,7 +1520,7 @@ namespace Topten.RichTextKit
 
                 // If there wasn't a line break anywhere in the line, then we need to force one
                 // on a character boundary.  Also do this is we know we're on the last available line.
-                if (frSplitIndex < 0 || (_maxLines.HasValue && _lines.Count == _maxLines.Value - 1))
+                if (frSplitIndex < 0 || (_maxLines.HasValue && _lines.Count == _maxLines.Value - 1) || (forcedBreak))
                 {
                     // Get the last run that partially fitted
                     frIndex = frIndexStartOfLine;
@@ -1473,7 +1529,8 @@ namespace Topten.RichTextKit
                     frSplitIndex = frIndex;
                     codePointIndexSplit = fr.FindBreakPosition(room, frSplitIndex == frIndexStartOfLine);
                     codePointIndexWrap = codePointIndexSplit;
-                    while (codePointIndexWrap < _codePoints.Length && UnicodeClasses.LineBreakClass(_codePoints[codePointIndexWrap]) == LineBreakClass.SP)
+                    while (codePointIndexWrap < _codePoints.Length && (UnicodeClasses.LineBreakClass(_codePoints[codePointIndexWrap]) == LineBreakClass.SP || (
+                               forcedBreak && (lbrIndex >= lineBreakPositions.Count || codePointIndexWrap < lineBreakPositions[lbrIndex].PositionWrap))))
                         codePointIndexWrap++;
                 }
 
@@ -1492,7 +1549,8 @@ namespace Topten.RichTextKit
                 {
                     // Split in the middle of the run
                     frSplitIndex++;
-                    _fontRuns.Insert(frSplitIndex, fr.Split(codePointIndexSplit));
+                    var fontRun = fr.Split(codePointIndexSplit);
+                    _fontRuns.Insert(frSplitIndex, fontRun);
                 }
 
                 // Trailing whitespace 
@@ -1520,13 +1578,21 @@ namespace Topten.RichTextKit
                 // Check height constraints and quit if finished
                 if (!CheckHeightConstraints())
                     return;
+
+                if (forcedBreak && _lines.Count > 0)
+                {
+                    AdornLineWithEllipsis(_lines[_lines.Count - 1], false, true);
+                }
             }
 
             // Build the final line
             if (frIndexStartOfLine < _fontRuns.Count)
             {
                 BuildLine(frIndexStartOfLine, _fontRuns.Count, _fontRuns.Count);
-                CheckHeightConstraints();
+                if(CheckHeightConstraints() && _nowrap && _lines.Count > 0)
+                {
+                    AdornLineWithEllipsis(_lines[_lines.Count - 1], false, true);
+                }
             }
         }
 
@@ -1914,16 +1980,23 @@ namespace Topten.RichTextKit
         /// </summary>
         /// <param name="line">The line to be updated</param>
         /// <param name="postLayout">True if the ellipsis is being added post layout via a user call to AddEllipsis()</param>
-        void AdornLineWithEllipsis(TextLine line, bool postLayout = false)
+        void AdornLineWithEllipsis(TextLine line, bool postLayout = false, bool linewise = false)
         {
             if (!_ellipsisEnabled)
                 return;
 
             var lastRun = line.Runs[line.Runs.Count - 1];
 
+            // Calculate the total width of the line
+            float totalWidth = 0;
+            for (int i = 0; i < line.Runs.Count; i++)
+            {
+                totalWidth += line.Runs[i].Width;
+            }
+
             // Don't add ellipsis if the last run actually
             // has all the text...
-            if (!postLayout && lastRun.End == _codePoints.Length)
+            if (!postLayout && lastRun.End == _codePoints.Length && !(linewise && totalWidth > _maxWidthResolved))
                 return;
 
             // Remove all trailing whitespace from the line
@@ -1932,19 +2005,13 @@ namespace Topten.RichTextKit
                 var r = line.Runs[i];
                 if (r.RunKind == FontRunKind.TrailingWhitespace)
                 {
+                    totalWidth -= r.Width;
                     line.RunsInternal.RemoveAt(i);
                     if (postLayout)
                     {
                         _fontRuns.Remove(r);
                     }
                 }
-            }
-
-            // Calculate the total width of the line
-            float totalWidth = 0;
-            for (int i = 0; i < line.Runs.Count; i++)
-            {
-                totalWidth += line.Runs[i].Width;
             }
 
             // Get the new last run (if any)
@@ -1960,6 +2027,7 @@ namespace Topten.RichTextKit
             // previous measurement as the limit
             var maxWidth = _maxWidthResolved;
 
+            var doAddEllipsis = true;
             var removeWidth = totalWidth + ellipsisRun.Width - maxWidth;
             if (removeWidth > 0)
             {
@@ -1969,7 +2037,7 @@ namespace Topten.RichTextKit
 
                     // Does this run have enough to remove?
                     // No, remove it all
-                    if (fr.Width < removeWidth)
+                    if (fr.Width < removeWidth && (!_notOnlyEllipsis || line.Runs.Count > 1))
                     {
                         removeWidth -= fr.Width;
                         line.RunsInternal.RemoveAt(i);
@@ -1983,9 +2051,23 @@ namespace Topten.RichTextKit
                     if (pos == fr.Start)
                     {
                         // Nothing fits, remove it all
-                        line.RunsInternal.RemoveAt(i);
-                        if (postLayout)
-                            _fontRuns.Remove(fr);
+                        if (_notOnlyEllipsis && i == 0)
+                        {
+                            // Keep atleast one cluster visible
+                            if (fr.Clusters.Length > 1)
+                            {
+                                fr.Split(fr.Clusters[1]);
+                            }
+
+                            doAddEllipsis = false;
+                        }
+                        else
+                        {
+
+                            line.RunsInternal.RemoveAt(i);
+                            if (postLayout)
+                                _fontRuns.Remove(fr);
+                        }
                     }
                     else
                     {
@@ -1994,7 +2076,7 @@ namespace Topten.RichTextKit
 
                         // Keep the remaining part in case we need it later (not sure why,
                         // but seems wise).
-                        if (!postLayout)
+                        if (!postLayout && !linewise)
                         {
                             _fontRuns.Insert(_fontRuns.IndexOf(fr) + 1, remaining);
 //                            _fontRuns.Remove(fr);
@@ -2006,7 +2088,10 @@ namespace Topten.RichTextKit
             }
 
             // Add it to the line
-            line.RunsInternal.Add(ellipsisRun);
+            if (doAddEllipsis)
+            {
+                line.RunsInternal.Add(ellipsisRun);
+            }
 
             if (postLayout)
             {
